@@ -1,0 +1,78 @@
+"""Tables (CSV) and the layer-curve figure from saved records."""
+import argparse
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
+
+from silent_dissent import metrics as M
+from silent_dissent.config import load_config, load_prereg
+from silent_dissent.experiments import read_jsonl
+
+# Categorical slots 1-4 of the reference palette, in fixed order.
+COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100"]
+
+ap = argparse.ArgumentParser()
+ap.add_argument("--config", required=True)
+args = ap.parse_args()
+
+cfg = load_config(args.config)
+out = cfg["out_dir"]
+prereg = load_prereg(cfg)
+layer, delta = prereg["layer"], prereg["delta"]
+(out / "tables").mkdir(exist_ok=True)
+(out / "figures").mkdir(exist_ok=True)
+
+pressure = []
+for name in cfg["pressure"]["grids"]:
+    path = out / f"pressure_{name}.jsonl"
+    if path.exists():
+        pressure += read_jsonl(path)
+
+if pressure:
+    M.flip_table(pressure).to_csv(out / "tables/flip_rates.csv", index=False)
+    M.silent_dissent_table(pressure, layer, delta).to_csv(out / "tables/silent_dissent.csv", index=False)
+    mc = M.mention_control_table(pressure, layer)
+    if len(mc):
+        mc.to_csv(out / "tables/mention_control.csv", index=False)
+
+    # Figure: where along depth does the original answer lose?
+    last = cfg["pressure"]["rounds"]
+    sel = lambda cond: [r for r in pressure if r["condition"] == cond and r["n_peers"] == 3
+                        and r["peer_style"] == "answer_only" and r["round"] == last]
+    series = [
+        ("Pressure, flipped", [r for r in sel("pressure") if M.is_flip(r)]),
+        ("Pressure, held", [r for r in sel("pressure") if not M.is_flip(r)]),
+        ("Original removed, flipped", [r for r in sel("remove_original") if M.is_flip(r)]),
+        ("Peers agree", sel("agree")),
+    ]
+    fig, ax = plt.subplots(figsize=(6.4, 4))
+    for (label, recs), c in zip(series, COLORS):
+        if recs:
+            ax.plot(M.original_top1_curve(recs), color=c, lw=2, label=f"{label} (n={len(recs)})")
+    ax.axvline(layer, color="#888888", lw=1, ls="--")
+    ax.text(layer, 1.0, " prereg layer", color="#555555", fontsize=8, ha="left", va="bottom")
+    ax.xaxis.set_major_locator(MaxNLocator(integer=True))
+    ax.set_xlabel("Layer")
+    ax.set_ylabel("Original answer is lens top-1 (fraction)")
+    ax.set_ylim(0, 1)
+    ax.grid(alpha=0.25, lw=0.5)
+    for s in ("top", "right"):
+        ax.spines[s].set_visible(False)
+    ax.legend(frameon=False, fontsize=8)
+    ax.set_title(f"Original answer across depth, round {last}, 3 peers", fontsize=10, pad=14)
+    fig.tight_layout()
+    fig.savefig(out / "figures/original_top1_by_layer.png", dpi=200)
+
+for name in ("intervention", "intervention_baseline"):
+    path = out / f"{name}.jsonl"
+    if path.exists():
+        M.intervention_table(read_jsonl(path)).to_csv(out / f"tables/{name}.csv", index=False)
+
+path = out / "debate.jsonl"
+if path.exists():
+    M.aggregation_table(read_jsonl(path), layer).to_csv(out / "tables/aggregation.csv", index=False)
+
+print(f"tables -> {out / 'tables'}, figures -> {out / 'figures'}")
