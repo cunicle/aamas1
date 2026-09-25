@@ -8,7 +8,7 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                      # 14 个测试，不需要下载任何东西
+pytest -q                      # 18 个测试，不需要下载任何东西
 ```
 
 ## 流程
@@ -17,6 +17,7 @@ pytest -q                      # 14 个测试，不需要下载任何东西
 
 | 步骤 | 命令 | 产出（`results/<run>/`） |
 |---|---|---|
+| 0. 拟合 J-lens | `python scripts/fit_jlens.py --config C` | `lenses/qwen7b_jlens.pt`（见下文 Lens 一节） |
 | 1. 独立作答（第 0 轮） | `python scripts/run_baseline.py --config C` | `baseline_all.jsonl`；按初始对/错分层后的 `baseline.jsonl` |
 | 2. **预注册读出层** | `python scripts/select_layer.py --config C`，然后 **commit `prereg/*.json`** | `prereg/qwen7b.json` |
 | 3. 施压实验 | `python scripts/run_pressure.py --config C [--grid main]` | `pressure_main.jsonl`、`pressure_controls.jsonl` |
@@ -32,7 +33,7 @@ pytest -q                      # 14 个测试，不需要下载任何东西
 
 ```bash
 python -m silent_dissent.debug results/debug_model
-for s in run_baseline select_layer run_pressure run_intervention run_debate analyze; do
+for s in fit_jlens run_baseline select_layer run_pressure run_intervention run_debate analyze; do
   python scripts/$s.py --config configs/debug.yaml; done
 ```
 
@@ -65,7 +66,26 @@ for s in run_baseline select_layer run_pressure run_intervention run_debate anal
 
 - `logit`：`unembed(final_norm(h))`，已实现，作为基线。测试保证它在最后一层与模型输出一致。
 - `affine`：每层一个线性映射 `A_l h + b_l`，再接 logit lens。tuned lens 这一类方法都可以导出成这个格式直接使用。
-- `jlens`：**TODO**。实现 `logits(h, layer)` 和 `direction(token_id, layer)` 两个方法即可，其余代码不需要改。如果 J-lens 本身就是逐层的线性映射，直接导出成 affine 格式最快。
+- `jlens`：Jacobian lens（Anthropic, *Verbalizable Representations Form a Global Workspace in Language Models*, 2026）。主实验默认使用它。
+  - 定义：`lens_l(h) = unembed(final_norm(J_l h))`，其中 `J_l = E[∂h_final/∂h_l]` 是在通用语料上平均的输入-输出 Jacobian。
+  - 估计量移植自官方实现 [anthropics/jacobian-lens](https://github.com/anthropics/jacobian-lens)（Apache-2.0）：对某个源位置 p，把所有 p' ≥ p 的目标位置的梯度求和，再对源位置取平均；前 16 个位置（attention sink）不参与。代码在 `silent_dissent/jlens.py`。测试会与暴力计算的完整 Jacobian 对比；在同一模型上与官方代码的结果差异小于 1e-8。
+  - 文件格式与官方一致，两边拟合的 lens 可以互相加载。官方预拟合的 lens 只有 Qwen3.5-4B 和 Qwen3.6-27B（HF 仓库 `neuronpedia/jacobian-lens`，revision `qwen-n1000`），**没有 Qwen2.5-7B**，所以主实验需要自己拟合。
+  - 注入方向：`J_l^T` 乘以 logit lens 的 token 方向。最后一层没有 J，直接用恒等映射，因此最后一层的读数与模型输出完全一致。
+
+### 拟合 J-lens
+
+```bash
+python scripts/fit_jlens.py --config configs/qwen7b.yaml               # 单卡
+# 多卡：每张卡跑一个 shard（拿到不相交的 prompt 子集），然后合并
+CUDA_VISIBLE_DEVICES=0 python scripts/fit_jlens.py --config C --shard 0/4 &
+...
+python scripts/fit_jlens.py --config C --merge
+```
+
+- 语料默认是 wikitext-103，与官方预拟合 lens 相同。每条取 128 个 token。论文用了 1000 条，但质量很快饱和，100–200 条就够用（配置里默认 200）。
+- 每条 prompt 的开销：1 次前向，加上 `ceil(d_model / dim_batch)` 次反向。7B 模型、`dim_batch=16` 时是 224 次反向。先用 `--n-prompts 2` 测一下单条耗时，再估计总时间。
+- 中断后重新运行同一条命令，会从 `<path>.ckpt` 断点续跑。
+- lens 文件放在 `lenses/`，建议不要 commit（7B 的 lens 约 0.7GB）。它与 prereg 一起决定了结果，所以要记下拟合时的配置。
 
 ## 代码结构
 

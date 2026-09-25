@@ -10,8 +10,8 @@ Every lens implements two methods used by the rest of the pipeline:
 
 `LogitLens` is fully implemented and serves as the baseline. `AffineLens`
 covers any lens that is a learned/derived per-layer linear map into the final
-residual space (tuned lens and similar). `JLens` is the hook for the J-lens
-implementation used in the paper.
+residual space (tuned lens and similar). `JLens` is the Jacobian lens, the
+special case where that map is the average Jacobian J_l (silent_dissent/jlens.py).
 """
 from __future__ import annotations
 
@@ -95,25 +95,28 @@ class AffineLens(LogitLens):
         return self.maps[layer][0].float().T @ d  # pull back through A_l
 
 
-class JLens(Lens):
-    """J-lens. TODO: implement `logits` and `direction`.
+class JLens(AffineLens):
+    """Jacobian lens: unembed(final_norm(J_l h)), J_l = E[d h_final / d h_l].
 
-    If the J-lens is a per-layer linear map into the final residual space, the
-    quickest route is to export it in `AffineLens` format and set
-    `lens: {name: affine, path: ...}` in the config instead of filling this in.
+    `path` is a lens file in the reference format (see silent_dissent/jlens.py;
+    fit one with scripts/fit_jlens.py or use a pre-fitted reference lens).
+    Layers without a J_l (the final layer, which is the fitting target) use the
+    identity, so the last layer reproduces the model output exactly.
+    `direction` is J_l^T times the logit-lens token direction.
     """
 
     name = "jlens"
 
-    def __init__(self, model, **kwargs):
-        self.model = model
-        self.kwargs = kwargs
+    def __init__(self, model, path: str):
+        from .jlens import load_lens
 
-    def logits(self, h, layer):
-        raise NotImplementedError("JLens.logits: plug in the J-lens readout here")
-
-    def direction(self, token_id, layer):
-        raise NotImplementedError("JLens.direction: plug in the J-lens token direction here")
+        LogitLens.__init__(self, model)
+        dev = self.unembed.weight.device
+        J, self.n_prompts = load_lens(path)
+        d = self.unembed.weight.shape[1]
+        if next(iter(J.values())).shape != (d, d):
+            raise ValueError(f"{path}: J is {tuple(next(iter(J.values())).shape)}, model d_model is {d}")
+        self.maps = {l: (M.to(dev), None) for l, M in J.items()}
 
 
 LENSES = {"logit": LogitLens, "affine": AffineLens, "jlens": JLens}

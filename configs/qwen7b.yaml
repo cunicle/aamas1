@@ -4,8 +4,16 @@ model:
   dtype: bfloat16
 
 lens:
-  name: logit          # logit | affine | jlens
-  kwargs: {}           # affine: {path: lenses/qwen7b_affine.pt}
+  name: jlens          # logit | affine | jlens
+  kwargs: {path: lenses/qwen7b_jlens.pt}   # fit with scripts/fit_jlens.py first
+
+# Jacobian-lens fitting (scripts/fit_jlens.py). The paper uses 1000 x 128-token
+# wikitext sequences; quality saturates early and ~100-200 is usable.
+jlens:
+  corpus: wikitext     # or a local .txt (one doc per line) / .jsonl with "text"
+  n_prompts: 200
+  max_seq_len: 128
+  dim_batch: 16        # output dims per backward pass; raise if memory allows
 
 data:
   n_choices: 4
