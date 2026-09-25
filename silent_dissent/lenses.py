@@ -31,13 +31,19 @@ class Lens:
 
 
 def _norm_gain(norm: torch.nn.Module) -> torch.Tensor | None:
-    """Elementwise gain of the final norm (Gemma-style norms scale by 1 + w)."""
+    """Elementwise gain of the final norm.
+
+    For RMS-style norms this is read off empirically as norm(ones), which covers
+    both w and (1 + w) parameterisations (Gemma, Qwen3-Next / Qwen3.5) without
+    per-architecture special cases. LayerNorm (mean-subtracting) uses its weight.
+    """
     w = getattr(norm, "weight", None)
     if w is None:
         return None
-    if "gemma" in type(norm).__name__.lower():
-        return 1.0 + w
-    return w
+    if isinstance(norm, torch.nn.LayerNorm):
+        return w
+    with torch.no_grad():
+        return norm(torch.ones(1, w.shape[-1], dtype=w.dtype, device=w.device))[0].float()
 
 
 class LogitLens(Lens):
@@ -98,8 +104,9 @@ class AffineLens(LogitLens):
 class JLens(AffineLens):
     """Jacobian lens: unembed(final_norm(J_l h)), J_l = E[d h_final / d h_l].
 
-    `path` is a lens file in the reference format (see silent_dissent/jlens.py;
-    fit one with scripts/fit_jlens.py or use a pre-fitted reference lens).
+    Either `path` (a local lens file in the reference format, e.g. from
+    scripts/fit_jlens.py) or `repo` + `filename` (+ `revision`) for a
+    pre-fitted reference lens on the HuggingFace Hub.
     Layers without a J_l (the final layer, which is the fitting target) use the
     identity, so the last layer reproduces the model output exactly.
     `direction` is J_l^T times the logit-lens token direction.
@@ -107,9 +114,14 @@ class JLens(AffineLens):
 
     name = "jlens"
 
-    def __init__(self, model, path: str):
+    def __init__(self, model, path: str | None = None, repo: str | None = None, filename: str | None = None,
+                 revision: str | None = None):
         from .jlens import load_lens
 
+        if path is None:
+            from huggingface_hub import hf_hub_download
+
+            path = hf_hub_download(repo, filename, revision=revision)
         LogitLens.__init__(self, model)
         dev = self.unembed.weight.device
         J, self.n_prompts = load_lens(path)

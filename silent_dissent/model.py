@@ -45,10 +45,12 @@ def replace_layer_output(out, new_h):
     return (new_h,) + tuple(out[1:]) if isinstance(out, tuple) else new_h
 
 
-def load_model(name: str, dtype: str = "bfloat16", device_map: str | None = "auto"):
+def load_model(name: str, dtype: str = "bfloat16", device_map: str | None = "auto",
+               chat_template_kwargs: dict | None = None):
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     tok = AutoTokenizer.from_pretrained(name)
+    tok.sd_template_kwargs = dict(chat_template_kwargs or {})  # read by prompts.render
     tok.padding_side = "left"
     if tok.pad_token is None:
         tok.pad_token = tok.eos_token

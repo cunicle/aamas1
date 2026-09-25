@@ -43,7 +43,8 @@ if args.shard:
     out = f"{out}.shard{i}of{n_shards}"
 
 m = cfg["model"]
-model, tok = load_model(m["name"], m.get("dtype", "bfloat16"), m.get("device_map", "auto"))
+model, tok = load_model(m["name"], m.get("dtype", "bfloat16"), m.get("device_map", "auto"),
+                        m.get("chat_template_kwargs"))
 jlens.fit(model, tok, prompts, out, dim_batch=jc.get("dim_batch", 8), max_seq_len=jc.get("max_seq_len", 128),
           skip_first=jc.get("skip_first", jlens.SKIP_FIRST), target_layer=jc.get("target_layer"))
 print(f"fitted on {len(prompts)} prompts -> {out}")

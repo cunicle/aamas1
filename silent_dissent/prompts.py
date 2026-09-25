@@ -171,15 +171,18 @@ def render(tokenizer, messages: list[dict], prefix: str = ANSWER_PREFIX) -> str:
     """Apply the chat template and append the forced answer prefix.
 
     Templates that reject a system role (e.g. Gemma) get the system prompt
-    folded into the first user message.
+    folded into the first user message. Extra template arguments (e.g.
+    enable_thinking=False for Qwen3.x) come from `tokenizer.sd_template_kwargs`,
+    set by `load_model`.
     """
+    kw = getattr(tokenizer, "sd_template_kwargs", None) or {}
     try:
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, **kw)
     except Exception:
         if messages and messages[0]["role"] == "system":
             sys_msg, rest = messages[0], [dict(m) for m in messages[1:]]
             rest[0]["content"] = sys_msg["content"] + "\n\n" + rest[0]["content"]
-            text = tokenizer.apply_chat_template(rest, tokenize=False, add_generation_prompt=True)
+            text = tokenizer.apply_chat_template(rest, tokenize=False, add_generation_prompt=True, **kw)
         else:
             raise
     return text + prefix

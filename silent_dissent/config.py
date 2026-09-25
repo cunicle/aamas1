@@ -23,7 +23,8 @@ def load_config(path: str) -> dict:
 
 def setup(cfg: dict) -> tuple[LM, object]:
     m = cfg["model"]
-    model, tok = load_model(m["name"], m.get("dtype", "bfloat16"), m.get("device_map", "auto"))
+    model, tok = load_model(m["name"], m.get("dtype", "bfloat16"), m.get("device_map", "auto"),
+                            m.get("chat_template_kwargs"))
     letters = list("ABCDEFGH"[: cfg["data"].get("n_choices", 4)])
     lm = LM(model, tok, letters, ANSWER_PREFIX)
     lens = build_lens(model, cfg["lens"]["name"], **cfg["lens"].get("kwargs", {}))

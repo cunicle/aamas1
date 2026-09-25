@@ -8,16 +8,34 @@
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                      # 18 个测试，不需要下载任何东西
+pytest -q                      # 23 个测试，不需要下载任何东西
 ```
 
 ## 流程
 
-以 `configs/qwen7b.yaml` 为例。换模型时复制一份，改 `model.name`、`out_dir`、`prereg` 三项。
+主实验是 `configs/qwen35_4b.yaml`：Qwen3.5-4B 加上官方预拟合的 J-lens，不需要自己拟合。`configs/qwen7b.yaml`（Qwen2.5-7B）留作复现，需要先跑第 0 步拟合 lens。换模型时复制一份配置，改 `model.name`、`lens`、`out_dir`、`prereg` 四项。
+
+### 在租来的 GPU 上开始（A100）
+
+```bash
+git clone https://github.com/cunicle/aamas1 && cd aamas1
+bash scripts/setup_gpu.sh                 # 装环境、加速 kernel，下载模型、lens 和数据，跑测试和预检
+```
+
+`scripts/check_model.py` 是预检脚本，最后一行必须是 `ALL CHECKS PASSED` 才能开始正式实验。它会检查以下几项：
+- chat 模板：Qwen3.5 默认开启思考模式，配置里用 `enable_thinking: false` 关掉；
+- 字母是否是单个 token；
+- left padding 是否影响读数；
+- 最后一层的 lens 读数是否等于模型输出；
+- 首 token 是字母的比例和准确率；
+- J-lens 和 logit lens 逐层的一致率；
+- 吞吐量，以及据此估算的全量实验耗时。
+
+建议先用 `--limit` 小样本把第 1–6 步跑通一遍，再上全量。
 
 | 步骤 | 命令 | 产出（`results/<run>/`） |
 |---|---|---|
-| 0. 拟合 J-lens | `python scripts/fit_jlens.py --config C` | `lenses/qwen7b_jlens.pt`（见下文 Lens 一节） |
+| 0. 拟合 J-lens（只有没有官方 lens 的模型才需要，比如 qwen7b） | `python scripts/fit_jlens.py --config C` | `lenses/qwen7b_jlens.pt`（见下文 Lens 一节） |
 | 1. 独立作答（第 0 轮） | `python scripts/run_baseline.py --config C` | `baseline_all.jsonl`；按初始对/错分层后的 `baseline.jsonl` |
 | 2. **预注册读出层** | `python scripts/select_layer.py --config C`，然后 **commit `prereg/*.json`** | `prereg/qwen7b.json` |
 | 3. 施压实验 | `python scripts/run_pressure.py --config C [--grid main]` | `pressure_main.jsonl`、`pressure_controls.jsonl` |
@@ -69,7 +87,7 @@ for s in fit_jlens run_baseline select_layer run_pressure run_intervention run_d
 - `jlens`：Jacobian lens（Anthropic, *Verbalizable Representations Form a Global Workspace in Language Models*, 2026）。主实验默认使用它。
   - 定义：`lens_l(h) = unembed(final_norm(J_l h))`，其中 `J_l = E[∂h_final/∂h_l]` 是在通用语料上平均的输入-输出 Jacobian。
   - 估计量移植自官方实现 [anthropics/jacobian-lens](https://github.com/anthropics/jacobian-lens)（Apache-2.0）：对某个源位置 p，把所有 p' ≥ p 的目标位置的梯度求和，再对源位置取平均；前 16 个位置（attention sink）不参与。代码在 `silent_dissent/jlens.py`。测试会与暴力计算的完整 Jacobian 对比；在同一模型上与官方代码的结果差异小于 1e-8。
-  - 文件格式与官方一致，两边拟合的 lens 可以互相加载。官方预拟合的 lens 只有 Qwen3.5-4B 和 Qwen3.6-27B（HF 仓库 `neuronpedia/jacobian-lens`，revision `qwen-n1000`），**没有 Qwen2.5-7B**，所以主实验需要自己拟合。
+  - 文件格式与官方一致，两边拟合的 lens 可以互相加载。官方预拟合的 lens 只有 Qwen3.5-4B 和 Qwen3.6-27B（HF 仓库 `neuronpedia/jacobian-lens`，revision `qwen-n1000`），**没有 Qwen2.5-7B**，所以主实验改用 Qwen3.5-4B。配置里的 `lens.kwargs` 写的是 `repo` / `revision` / `filename`，第一次运行时会自动下载。
   - 注入方向：`J_l^T` 乘以 logit lens 的 token 方向。最后一层没有 J，直接用恒等映射，因此最后一层的读数与模型输出完全一致。
 
 ### 拟合 J-lens
@@ -115,6 +133,9 @@ tests/            单元测试和端到端冒烟测试
 `metrics.py` 只依赖 JSONL 文件，所以 C 可以先用调试模型的输出开发分析代码，不需要等 GPU 实验跑完。
 
 ## 已知注意事项
+
+- Qwen3.5 的最终 RMSNorm 是按 `(1 + w)` 缩放的。注入方向里的 norm 增益用 `norm(ones)` 实测得到，不按架构名称去猜，测试覆盖了这一点。
+- Qwen3.5 是线性注意力和全注意力的混合结构。测试确认 left padding 下批量读数与单条读数一致（用的是参考 PyTorch kernel）；GPU 上装了 fla kernel 之后，由 `check_model.py` 再验证一次。
 
 - 默认只保留 4 个选项的题，保证各条件的随机水平相同。CSQA 有 5 个选项，而且 test 集没有标签，使用时要设置 `split: validation` 和 `n_choices: 5`。
 - `require_letter_format: true` 会丢掉第 0 轮首选 token 不是字母的题。
