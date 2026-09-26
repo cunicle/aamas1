@@ -1,32 +1,29 @@
-# Main run. Copy this file per model and change model.name / out_dir / prereg.
+# Main run: Qwen3.5-4B with the official pre-fitted Jacobian lens (no fitting needed).
+# Before the full run: python scripts/check_model.py --config configs/qwen35_4b.yaml
 model:
-  name: Qwen/Qwen2.5-7B-Instruct
+  name: Qwen/Qwen3.5-4B
   dtype: bfloat16
+  chat_template_kwargs: {enable_thinking: false}   # otherwise the template opens "<think>" before our prefix
 
 lens:
-  name: jlens          # logit | affine | jlens
-  kwargs: {path: lenses/qwen7b_jlens.pt}   # fit with scripts/fit_jlens.py first
-
-# Jacobian-lens fitting (scripts/fit_jlens.py). The paper uses 1000 x 128-token
-# wikitext sequences; quality saturates early and ~100-200 is usable.
-jlens:
-  corpus: wikitext     # or a local .txt (one doc per line) / .jsonl with "text"
-  n_prompts: 200
-  max_seq_len: 128
-  dim_batch: 16        # output dims per backward pass; raise if memory allows
+  name: jlens
+  kwargs:              # official pre-fitted lens (1000 wikitext sequences), downloaded from the Hub
+    repo: neuronpedia/jacobian-lens
+    revision: qwen-n1000
+    filename: qwen3.5-4b/jlens/Salesforce-wikitext/Qwen3.5-4B_jacobian_lens_n1000.pt
 
 data:
   n_choices: 4
   require_letter_format: true  # drop items whose unrestricted top-1 token is not a letter
   sources:
-    - {name: mmlu, split: test, limit: 4000}
+    - {name: mmlu, split: test, limit: 6000}  # 4000 left only 891 initially-wrong items
     - {name: arc, split: test, limit: 1172}
   n_per_stratum: 1000  # initially-correct and initially-wrong items kept after round 0
 
 seed: 0
-batch_size: 8
-out_dir: results/qwen7b
-prereg: prereg/qwen7b.json
+batch_size: 16
+out_dir: results/qwen35_4b
+prereg: prereg/qwen35_4b.json
 
 # Pre-registration rule for the readout layer (applied to round-0 data only).
 layer_selection:
@@ -46,10 +43,17 @@ pressure:
       n_peers: [3]
       peer_style: [answer_only]
       target_mode: [wrong, correct]
+    positive_control:  # prereg/qwen35_4b_addendum1.json; added after main/controls ran, so run it alone:
+      condition: [instructed]  # run_pressure.py --config C --grid positive_control
+      n_peers: [0]
+      peer_style: [answer_only]
+      target_mode: [wrong]
 
 intervention:
   layer: null          # null = prereg layer
-  source: {condition: pressure, n_peers: 3, peer_style: answer_only}
+  # Set after the --limit 50 pilot, from flip rates only (no lens data): answer-only peers
+  # produced no flips, so the causal test uses the strongest-pressure cell instead.
+  source: {condition: pressure, n_peers: 5, peer_style: with_reason}
   rounds: [3]          # which pressure rounds to re-run with injection
   alphas: [0.0, 0.05, 0.1, 0.2, 0.4]
   kinds: [original, majority, other, random]

@@ -7,8 +7,15 @@ model:
   device_map: null
 
 lens:
-  name: logit
-  kwargs: {}
+  name: jlens
+  kwargs: {path: results/debug/jlens.pt}   # scripts/fit_jlens.py --config configs/debug.yaml
+
+jlens:
+  corpus: tests/fixtures/corpus.txt
+  n_prompts: 6
+  max_seq_len: 64
+  dim_batch: 16
+  skip_first: 2
 
 data:
   n_choices: 4

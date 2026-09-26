@@ -1,9 +1,12 @@
+import json
 import random
+from pathlib import Path
 
 import pytest
 
 from silent_dissent.experiments import build_states, expand_grid, replay_state
-from silent_dissent.prompts import (WITHHELD_TURN, DebateState, answer_turn, choose_control, choose_target)
+from silent_dissent.prompts import (WITHHELD_TURN, DebateState, answer_turn, choose_control, choose_target,
+                                    format_instruction)
 
 
 def _state(item, cond, n=3, original="A", target="C", control="D"):
@@ -53,6 +56,39 @@ def test_remove_original_hides_own_answers(items):
     st2 = run_rounds(_state(items[0], "pressure"), ["C", "C"])
     st2.advance()
     assert [m["content"] for m in st2.messages() if m["role"] == "assistant"] == [answer_turn(a) for a in "ACC"]
+
+
+def test_instructed_positive_control(items):
+    st = run_rounds(_state(items[0], "instructed", n=0), ["C", "C"])
+    st.advance()
+    msgs = st.messages()
+    assert [m["content"] for m in msgs if m["role"] == "user"][1:] == [format_instruction("C")] * 3
+    assert [m["content"] for m in msgs if m["role"] == "assistant"] == [answer_turn(a) for a in "ACC"]
+    assert "Agent 2" not in format_instruction("C") and "C" in format_instruction("C")
+    assert st.peer_answers() == []
+    with pytest.raises(ValueError):
+        _state(items[0], "instructed", n=3)
+    with pytest.raises(ValueError):
+        _state(items[0], "pressure", n=0)
+
+
+def test_instructed_prompt_matches_prereg_addendum():
+    addendum = json.loads((Path(__file__).parents[1] / "prereg/qwen35_4b_addendum1.json").read_text())
+    assert f"'{format_instruction('{target}')}'" in addendum["prompt"]
+
+
+def test_instructed_only_in_its_own_cell(items):
+    baseline = [{"item_id": it.item_id, "original": "A", "original_correct": it.gold == "A"} for it in items]
+    by_id = {it.item_id: it for it in items}
+    settings = expand_grid({"condition": ["instructed"], "n_peers": [0, 3], "peer_style": ["answer_only", "with_reason"],
+                            "target_mode": ["wrong"]})
+    states, meta = build_states(by_id, baseline, settings, seed=0)
+    assert len(states) == len(items)
+    assert all(m["n_peers"] == 0 and m["peer_style"] == "answer_only" for m in meta)
+    # same target as the pressure condition for the same item and target mode
+    pressure, _ = build_states(by_id, baseline, [{"condition": "pressure", "n_peers": 3, "peer_style": "answer_only",
+                                                  "target_mode": "wrong"}], seed=0)
+    assert [s.target for s in states] == [s.target for s in pressure]
 
 
 def test_replay_reproduces_messages(items):

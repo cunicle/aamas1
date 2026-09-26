@@ -10,8 +10,8 @@ Every lens implements two methods used by the rest of the pipeline:
 
 `LogitLens` is fully implemented and serves as the baseline. `AffineLens`
 covers any lens that is a learned/derived per-layer linear map into the final
-residual space (tuned lens and similar). `JLens` is the hook for the J-lens
-implementation used in the paper.
+residual space (tuned lens and similar). `JLens` is the Jacobian lens, the
+special case where that map is the average Jacobian J_l (silent_dissent/jlens.py).
 """
 from __future__ import annotations
 
@@ -31,13 +31,19 @@ class Lens:
 
 
 def _norm_gain(norm: torch.nn.Module) -> torch.Tensor | None:
-    """Elementwise gain of the final norm (Gemma-style norms scale by 1 + w)."""
+    """Elementwise gain of the final norm.
+
+    For RMS-style norms this is read off empirically as norm(ones), which covers
+    both w and (1 + w) parameterisations (Gemma, Qwen3-Next / Qwen3.5) without
+    per-architecture special cases. LayerNorm (mean-subtracting) uses its weight.
+    """
     w = getattr(norm, "weight", None)
     if w is None:
         return None
-    if "gemma" in type(norm).__name__.lower():
-        return 1.0 + w
-    return w
+    if isinstance(norm, torch.nn.LayerNorm):
+        return w
+    with torch.no_grad():
+        return norm(torch.ones(1, w.shape[-1], dtype=w.dtype, device=w.device))[0].float()
 
 
 class LogitLens(Lens):
@@ -95,25 +101,34 @@ class AffineLens(LogitLens):
         return self.maps[layer][0].float().T @ d  # pull back through A_l
 
 
-class JLens(Lens):
-    """J-lens. TODO: implement `logits` and `direction`.
+class JLens(AffineLens):
+    """Jacobian lens: unembed(final_norm(J_l h)), J_l = E[d h_final / d h_l].
 
-    If the J-lens is a per-layer linear map into the final residual space, the
-    quickest route is to export it in `AffineLens` format and set
-    `lens: {name: affine, path: ...}` in the config instead of filling this in.
+    Either `path` (a local lens file in the reference format, e.g. from
+    scripts/fit_jlens.py) or `repo` + `filename` (+ `revision`) for a
+    pre-fitted reference lens on the HuggingFace Hub.
+    Layers without a J_l (the final layer, which is the fitting target) use the
+    identity, so the last layer reproduces the model output exactly.
+    `direction` is J_l^T times the logit-lens token direction.
     """
 
     name = "jlens"
 
-    def __init__(self, model, **kwargs):
-        self.model = model
-        self.kwargs = kwargs
+    def __init__(self, model, path: str | None = None, repo: str | None = None, filename: str | None = None,
+                 revision: str | None = None):
+        from .jlens import load_lens
 
-    def logits(self, h, layer):
-        raise NotImplementedError("JLens.logits: plug in the J-lens readout here")
+        if path is None:
+            from huggingface_hub import hf_hub_download
 
-    def direction(self, token_id, layer):
-        raise NotImplementedError("JLens.direction: plug in the J-lens token direction here")
+            path = hf_hub_download(repo, filename, revision=revision)
+        LogitLens.__init__(self, model)
+        dev = self.unembed.weight.device
+        J, self.n_prompts = load_lens(path)
+        d = self.unembed.weight.shape[1]
+        if next(iter(J.values())).shape != (d, d):
+            raise ValueError(f"{path}: J is {tuple(next(iter(J.values())).shape)}, model d_model is {d}")
+        self.maps = {l: (M.to(dev), None) for l, M in J.items()}
 
 
 LENSES = {"logit": LogitLens, "affine": AffineLens, "jlens": JLens}

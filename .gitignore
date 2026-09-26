@@ -5,3 +5,4 @@ __pycache__/
 results/
 hf_cache/
 .venv/
+lenses/

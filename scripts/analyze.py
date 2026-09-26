@@ -39,14 +39,18 @@ if pressure:
         mc.to_csv(out / "tables/mention_control.csv", index=False)
 
     # Figure: where along depth does the original answer lose?
+    # Pressure series use the intervention source cell (answer-only peers barely flip the
+    # model); the controls exist only at 3 answer-only peers.
     last = cfg["pressure"]["rounds"]
-    sel = lambda cond: [r for r in pressure if r["condition"] == cond and r["n_peers"] == 3
-                        and r["peer_style"] == "answer_only" and r["round"] == last]
+    src = cfg["intervention"]["source"]
+    sel = lambda cond, n, style: [r for r in pressure if r["condition"] == cond and r["n_peers"] == n
+                                  and r["peer_style"] == style and r["round"] == last]
+    strong = sel(src["condition"], src["n_peers"], src["peer_style"])
     series = [
-        ("Pressure, flipped", [r for r in sel("pressure") if M.is_flip(r)]),
-        ("Pressure, held", [r for r in sel("pressure") if not M.is_flip(r)]),
-        ("Original removed, flipped", [r for r in sel("remove_original") if M.is_flip(r)]),
-        ("Peers agree", sel("agree")),
+        ("Pressure, flipped", [r for r in strong if M.is_flip(r)]),
+        ("Pressure, held", [r for r in strong if not M.is_flip(r)]),
+        ("Original removed, flipped", [r for r in sel("remove_original", 3, "answer_only") if M.is_flip(r)]),
+        ("Peers agree", sel("agree", 3, "answer_only")),
     ]
     fig, ax = plt.subplots(figsize=(6.4, 4))
     for (label, recs), c in zip(series, COLORS):
@@ -62,14 +66,14 @@ if pressure:
     for s in ("top", "right"):
         ax.spines[s].set_visible(False)
     ax.legend(frameon=False, fontsize=8)
-    ax.set_title(f"Original answer across depth, round {last}, 3 peers", fontsize=10, pad=14)
+    style = src["peer_style"].replace("_", " ")
+    ax.set_title(f"Original answer across depth, round {last} (pressure: {src['n_peers']} peers, {style})",
+                 fontsize=10, pad=14)
     fig.tight_layout()
     fig.savefig(out / "figures/original_top1_by_layer.png", dpi=200)
 
-for name in ("intervention", "intervention_baseline"):
-    path = out / f"{name}.jsonl"
-    if path.exists():
-        M.intervention_table(read_jsonl(path)).to_csv(out / f"tables/{name}.csv", index=False)
+for path in sorted(out.glob("intervention*.jsonl")):  # incl. tagged runs, e.g. intervention_r1.jsonl
+    M.intervention_table(read_jsonl(path)).to_csv(out / f"tables/{path.stem}.csv", index=False)
 
 path = out / "debate.jsonl"
 if path.exists():
