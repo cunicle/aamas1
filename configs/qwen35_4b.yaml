@@ -46,7 +46,9 @@ pressure:
 
 intervention:
   layer: null          # null = prereg layer
-  source: {condition: pressure, n_peers: 3, peer_style: answer_only}
+  # Set after the --limit 50 pilot, from flip rates only (no lens data): answer-only peers
+  # produced no flips, so the causal test uses the strongest-pressure cell instead.
+  source: {condition: pressure, n_peers: 5, peer_style: with_reason}
   rounds: [3]          # which pressure rounds to re-run with injection
   alphas: [0.0, 0.05, 0.1, 0.2, 0.4]
   kinds: [original, majority, other, random]
