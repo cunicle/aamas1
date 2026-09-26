@@ -16,7 +16,7 @@ data:
   n_choices: 4
   require_letter_format: true  # drop items whose unrestricted top-1 token is not a letter
   sources:
-    - {name: mmlu, split: test, limit: 4000}
+    - {name: mmlu, split: test, limit: 6000}  # 4000 left only 891 initially-wrong items
     - {name: arc, split: test, limit: 1172}
   n_per_stratum: 1000  # initially-correct and initially-wrong items kept after round 0
 
