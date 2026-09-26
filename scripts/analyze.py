@@ -72,10 +72,8 @@ if pressure:
     fig.tight_layout()
     fig.savefig(out / "figures/original_top1_by_layer.png", dpi=200)
 
-for name in ("intervention", "intervention_baseline"):
-    path = out / f"{name}.jsonl"
-    if path.exists():
-        M.intervention_table(read_jsonl(path)).to_csv(out / f"tables/{name}.csv", index=False)
+for path in sorted(out.glob("intervention*.jsonl")):  # incl. tagged runs, e.g. intervention_r1.jsonl
+    M.intervention_table(read_jsonl(path)).to_csv(out / f"tables/{path.stem}.csv", index=False)
 
 path = out / "debate.jsonl"
 if path.exists():
