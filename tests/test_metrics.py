@@ -44,3 +44,16 @@ def test_aggregation_internal_vote_recovers_dissent():
                      "final_logits": [0, 1, 0, 0], "lens_logits": lens_a})
     t = M.aggregation_table(recs, layer=0).set_index("round")
     assert t.loc[1, "acc_stated"] == 0 and t.loc[1, "acc_internal"] == 1 and t.loc[1, "acc_initial"] == 1
+
+
+def test_mention_control_table_separates_flips():
+    def rec(stated, orig_logit, ctrl_logit):
+        # letters A-D; original A, control C
+        return {"condition": "mention_control", "round": 1, "original_correct": False, "letters": list("ABCD"),
+                "original": "A", "stated": stated, "control": "C",
+                "lens_logits": [[orig_logit, 0.0, ctrl_logit, 0.0]]}
+
+    recs = [rec("A", 5.0, 0.0)] * 3 + [rec("B", -1.0, 0.0), rec("B", 1.0, 0.0)]
+    t = M.mention_control_table(recs, 0).set_index("flipped")
+    assert t.loc[False, "margin_n"] == 3 and t.loc[False, "p_orig_above_control"] == 1.0
+    assert t.loc[True, "margin_n"] == 2 and t.loc[True, "p_orig_above_control"] == 0.5

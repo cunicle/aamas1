@@ -152,18 +152,23 @@ def silent_dissent_table(records: list[dict], layer: int, delta: float) -> pd.Da
 
 
 def mention_control_table(records: list[dict], layer: int) -> pd.DataFrame:
-    """Original vs. equally-mentioned control letter at `layer`, stratified by original correctness.
+    """Original vs. equally-mentioned control letter at `layer`, split by round,
+    original correctness and whether the agent flipped.
 
-    Use the original_correct == False stratum as the clean comparison: there
-    both the original and the control letter are wrong options.
+    The test described in the README is the `flipped == True` rows: an agent that
+    did not flip still states its original answer, so its margin says nothing
+    about residual support. Use the original_correct == False stratum as the
+    clean comparison: there both the original and the control letter are wrong
+    options.
     """
     rows = []
-    for (rnd, oc), grp in scalar_frame(records).groupby(["round", "original_correct"]).groups.items():
-        recs = [records[i] for i in grp if records[i]["condition"] == "mention_control"]
-        if not recs:
-            continue
+    groups: dict[tuple, list[dict]] = {}
+    for r in records:
+        if r["condition"] == "mention_control":
+            groups.setdefault((r["round"], r["original_correct"], is_flip(r)), []).append(r)
+    for (rnd, oc, flipped), recs in sorted(groups.items()):
         margins = [original_margin(r, layer, r["control"]) for r in recs]
-        rows.append({"round": rnd, "original_correct": oc,
+        rows.append({"round": rnd, "original_correct": oc, "flipped": flipped,
                      **{f"margin_{k}": v for k, v in _summ(margins).items()},
                      "p_orig_above_control": float(np.mean([m > 0 for m in margins]))})
     return pd.DataFrame(rows)
