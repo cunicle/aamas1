@@ -68,20 +68,23 @@ def test_end_to_end(lm):
     lens = LogitLens(lm_.model)
     base = run_baseline(lm_, lens, items, batch_size=4)
     by_id = {it.item_id: it for it in items}
-    settings = expand_grid({"condition": list(CONDITIONS), "n_peers": [1, 3], "peer_style": ["answer_only", "with_reason"],
+    settings = expand_grid({"condition": list(CONDITIONS), "n_peers": [0, 1, 3], "peer_style": ["answer_only", "with_reason"],
                             "target_mode": ["wrong", "correct"]})
+    settings = [s for s in settings if (s["condition"] == "instructed") == (s["n_peers"] == 0)]
     reasons = generate_reasons(lm_, items[:2], {items[0].item_id: {"A", "C"}, items[1].item_id: {"B"}}, batch_size=2)
     assert set(reasons[items[0].item_id]) == {"A", "C"}
     states, meta = build_states(by_id, base, settings, seed=0, reasons=reasons)
     recs = run_pressure(lm_, lens, states, meta, rounds=2, batch_size=8)
     assert len(recs) == 2 * len(states)
     assert all(len(r["stated_history"]) == r["round"] + 1 for r in recs)
+    assert {r["n_peers"] for r in recs if r["condition"] == "instructed"} == {0}
 
     M.flip_table(recs)
     M.silent_dissent_table(recs, layer=1, delta=1.0)
     M.mention_control_table(recs, layer=1)
 
     src = [r for r in recs if r["condition"] == "pressure" and r["round"] == 2][:6]
+    src += [r for r in recs if r["condition"] == "instructed" and r["round"] == 2][:2]
     inter = run_intervention(lm_, lens, by_id, src, layer=2, alphas=[0.0, 0.5],
                              kinds=["original", "majority", "other", "random"], batch_size=4, seed=0)
     assert len(inter) == len(src) * 8

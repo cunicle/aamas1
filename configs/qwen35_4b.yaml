@@ -43,6 +43,11 @@ pressure:
       n_peers: [3]
       peer_style: [answer_only]
       target_mode: [wrong, correct]
+    positive_control:  # prereg/qwen35_4b_addendum1.json; added after main/controls ran, so run it alone:
+      condition: [instructed]  # run_pressure.py --config C --grid positive_control
+      n_peers: [0]
+      peer_style: [answer_only]
+      target_mode: [wrong]
 
 intervention:
   layer: null          # null = prereg layer

@@ -148,6 +148,8 @@ def build_states(items: dict[str, MCQItem], baseline: list[dict], settings: list
                 continue
             if cond == "split" and s["n_peers"] < 2:
                 continue
+            if cond == "instructed" and (s["n_peers"] != 0 or s["peer_style"] != "answer_only"):
+                continue  # no peers, so only the n_peers = 0, answer_only cell exists
             control = choose_control(b["original"], target, it.gold, it.letters, item_rng(seed, it.item_id, mode, "control"))
             key = (it.item_id, cond, s["n_peers"], s["peer_style"], target if cond != "agree" else None)
             if key in seen:  # e.g. `agree` does not depend on the target

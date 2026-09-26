@@ -66,6 +66,9 @@ for s in fit_jlens run_baseline select_layer run_pressure run_intervention run_d
 | `split` | 一半给 target，一半给原答案 | 压力强度 |
 | `mention_control` | 同 pressure，同时让对照字母 M 在同伴发言中被提及的次数与原答案在上下文中出现的次数相等 | 排除"只是上下文里出现过" |
 | `remove_original` | 同 pressure，但智能体自己之前的回答从上下文中删除 | 排除从上下文复制原答案 |
+| `instructed` | 没有同伴（`n_peers: 0`），只有一条指令：不管自己认为哪个对，都提交 target | 阳性对照：服从时嘴上答案和自己的答案已知不一致，检验读出能不能看到这种分歧 |
+
+`instructed` 是在主实验跑完之后加的，只在 `positive_control` 这个 grid 里，要单独跑：`python scripts/run_pressure.py --config C --grid positive_control`。预注册见 `prereg/qwen35_4b_addendum1.json`。
 
 `target_mode`：`wrong` 表示推一个既不是原答案也不是正确答案的选项；`correct` 表示推正确答案（只对初始答错的题有效，对应有益更新）。同一道题的 target 和对照字母在所有条件下保持一致，由 `(seed, item_id)` 决定，方便做配对比较。
 
